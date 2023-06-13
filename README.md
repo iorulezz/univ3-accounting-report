@@ -87,11 +87,12 @@ function swap(
 ) external returns (int256 amount0, int256 amount1);
 ```
 [[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L457) Note that we are ignoring price mechanics etc. Each swap charges the fee on the input token, i.e. the Pool keeps some of the input token as fee. This way the fees accumulate and will eventually be distributed to the LPs based on the amount of liquidity they are holding. The variables `feeGrowthGlobal0X128` and `feeGrowthGlobal1X128` keep account of the fee accumulation for this Pool. For example, `feeGrowthGlobal0X128` is defined as:
-```
+```solidity
 /// @notice The fee growth as a Q128.128 fees of token0 collected per unit of liquidity for the entire life of the pool
 uint256 public override feeGrowthGlobal0X128;
 ```
 [[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/interfaces/pool/IUniswapV3PoolState.sol#L36) This is represented as Q128.128 (fixed point number 128.128) and corresponds to fees of token0 per unit of liquidity.
+
 
 
 ### Protocol Fees
