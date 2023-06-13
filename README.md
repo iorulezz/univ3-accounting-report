@@ -1,4 +1,4 @@
-# Uniswap V3: Accounting, Positions, and Fees
+# Uniswap V3: Accounting of Positions and Fees
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -34,4 +34,8 @@
 - Reflection on the implications of Uniswap V3's mechanisms for accounting, positions, and fees.
 
 ## References
-- List of links to the Uniswap V3 code and any other resources referenced in the document.
+Links to the Uniswap V3 code repos and any other resources used to produce this document:
+- [Uniswap V3 core contracts](https://github.com/Uniswap/v3-core)
+- [Uniswap V3 periphery contracts](https://github.com/Uniswap/v3-periphery)
+- [The Uniswap V3 book](https://uniswapv3book.com/)
+- [Uniswap V3 whitepaper](https://uniswap.org/whitepaper.pdf)
