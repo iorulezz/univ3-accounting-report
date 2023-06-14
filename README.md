@@ -8,10 +8,11 @@
 5. [References](#references)
 
 ## Introduction
-- Brief overview of Uniswap V3, with a mention of v3-core and v3-periphery repositories.
 - Statement of the document's focus on v3-core.
 
-Uniswap V3 is a prominent decentralized exchange (DEX) on the Ethereum blockchain, known for its innovative features and mechanisms that set it apart from its predecessors and competitors. This document aims to delve into the intricacies of Uniswap V3, particularly focusing on how it handles the accounting of positions and fees.
+Uniswap V3 is a prominent decentralized exchange (DEX), known for its innovative features and mechanisms that set it apart from its predecessors. This document aims to delve into some of the intricacies of Uniswap V3. In particular, our focus is on how the protocol handles the accounting of positions and fees. Our goal
+
+The ho
 
 Write how we ignore price mechanics and link the book for details. 
 
@@ -31,9 +32,6 @@ These improvements in Uniswap V3 make it more capital efficient and flexible tha
 The Uniswap V3 protocol is primarily composed of two repositories: `v3-core` and `v3-periphery`. The `v3-core` repository contains the core contracts and logic for the protocol, including the contracts for pools, positions, and fees. On the other hand, the `v3-periphery` repository includes additional contracts that interact with the core contracts, providing extra functionality such as multicall, swapping, and liquidity management.
 
 In this document, we will primarily focus on the `v3-core` repository, as it forms the backbone of the Uniswap V3 protocol and is directly responsible for the mechanisms of accounting, positions, and fees. However, it's important to note that the `v3-periphery` repository also plays a significant role in the overall functionality of the protocol.
-
-- Should I write about the Callbacks? mint swap and flash all have callbacks. Ergo can only be called by another contract. Put this in the core vs periphery paragraph?
-
 
 ## Pools and Positions
 In Uniswap V3, every Pool is an instance of [`contract UniswapV3Pool`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L30). A pool contains many variables that define it or its state. Here, we will discuss some of those that are of relevance to this report. To begin with, let's look at some variables from the set of *immutables*:
@@ -111,32 +109,48 @@ function _updatePosition(
 ) private returns (Position.Info storage position) {
 ```
 [[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L379) This method will perform some tick operations to update ticks that have been crossed and eventually will calculate the fee growth *inside* the Position, with variables `feeGrowthInside0X128` and `feeGrowthInside1X128` by using the [`getFeeGrowthInside()`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/libraries/Tick.sol#L60) method from the Tick library. Finally, the `update()` method of the Position library will be called:
+```solidity
+/// @notice Credits accumulated fees to a user's position
+/// @param self The individual position to update
+/// @param liquidityDelta The change in pool liquidity as a result of the position update
+/// @param feeGrowthInside0X128 The all-time fee growth in token0, per unit of liquidity, inside the position's tick boundaries
+/// @param feeGrowthInside1X128 The all-time fee growth in token1, per unit of liquidity, inside the position's tick boundaries
+function update(
+  Info storage self,
+  int128 liquidityDelta,
+  uint256 feeGrowthInside0X128,
+  uint256 feeGrowthInside1X128
+) internal {
+```
+[[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/libraries/Position.sol#L44) As we discussed in the previous section, this method will update the liquidity of the position (if needed) and will also update the variables `tokensOwed0` and `tokensOwed1` which represent how many of each token the position (owner) is owed from the Pool. Those variables correspond to the tokens owed from fees accrued plus the tokens owed due to liquidity burn. As mentioned above, the `tokensOwed` variables will be updated only when `burn()` or `mint()` are called. In particular the protocol is designed such that when a user calls `burn(amount=0)`, since the liquidity delta is 0, it will update the `tokensOwed` variables with the fees they have accrued since their last update.
 
+Lastly, the tokens owed will not be sent to the caller by calling `mint()` or `burn()`. For this, a special [`collect()`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L490) method exists. The owner of the Position will have to call collect and only then the tokens owed will be sent to the specified recipient. 
 
 ## Additional Notes
 
-In this section, we will briefly mention some additional details that did not make it in the main body of the document.
+In this section, we will briefly mention some additional details that did not make it in the main body of the document. Those are separated in subsections of this section, in no particular order. 
 
-## Math Libraries
+### Math Libraries
 
-Uniswap V3 has a few libraries used for calculations. Those can be found in [`contracts/libraries`](https://github.com/Uniswap/v3-core/tree/main/contracts/libraries) folder. For example, `LiquidityMath` is used to calculate changes in liquidity and `TickMath` is used to calculate the (sqrt) price from ticks and vice versa. Many other math libraries can be found in the linked folder. 
+This document specifically puts the emphasis on the code and particularly the parts where the accounting of positions and fees is made. Of course, Uniswap V3 has a lot of interesting maths in its core which we do not visit in this document. The best resources to dive deeper in the actual math would be the whitepaper and the book for a lengthier but easier to follow description, both linked in #references below. To perform all the involved calculations, Uniswap V3 contains a few math libraries. Those can be found in [`contracts/libraries`](https://github.com/Uniswap/v3-core/tree/main/contracts/libraries) folder. For example, `LiquidityMath` is used to calculate changes in liquidity and `TickMath` is used to calculate the (sqrt) price from ticks and vice versa. Many other math libraries can be found in the linked folder. 
 
 ### Protocol Fees
-Not as important but write something about it? 
+Uniswap V3 has a mechanism for protocol fees, i.e. fees that are accruing for the protocol itself and be collected by the Pool admin/owner. The protocol fee is [defined](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L69) as a percentage of the (swap) fees. The tokens owed as protocol fees are stored in the [`ProtocolFees`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L82) struct and are [recalculated](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L761) at every swap. Finally, these fees can be collected calling the [`collectProtocol()`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L848) method.
 
 ### NFT Mechanism for Representing Positions
 - Explanation of how Uniswap V3 uses NFTs to represent liquidity positions.
 - Description of the minting process and the role of the NonfungiblePositionManager contract.
 - Link to the relevant code in the Uniswap V3 repository.
 
+### Callbacks
+There are three callbacks that are used by the Pool and are all defined [here](https://github.com/Uniswap/v3-core/tree/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/interfaces/callback). Essentially, the callbacks are there to make sure that tokens owed from the user to the Pool are paid before the transaction is over. This is the case for all `mint()`, `swap()` and `flash()`. This implies that these methods can be called only by contracts that implement the methods defined in the interfaces linked above. For example, the callback for a swap takes place [here](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L776). The contracts in `v3-periphery` which call the contract in core have to define these methods. As an example, here is the definition of [`uniswapV3SwapCallback`](https://github.com/Uniswap/v3-periphery/blob/6cce88e63e176af1ddb6cc56e029110289622317/contracts/SwapRouter.sol#L57) in `SwapRouter` from `v3-periphery`.
 
 ### Uniswap V4 
-
 Uniswap V4 was announced while I was writing this document :smile_cat: <br>
 https://blog.uniswap.org/uniswap-v4
 
 ## References
-Links to the Uniswap V3 code repos and any other resources used to produce this document:
+Links to the Uniswap V3 code repos and other resources used to produce this document:
 - [Uniswap V3 core contracts](https://github.com/Uniswap/v3-core)
 - [Uniswap V3 periphery contracts](https://github.com/Uniswap/v3-periphery)
 - [The Uniswap V3 book](https://uniswapv3book.com/)
