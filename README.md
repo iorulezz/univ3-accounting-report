@@ -2,10 +2,11 @@
 
 ## Table of Contents
 1. [Introduction](#introduction)
-2. [Accounting of Positions](#accounting-of-positions)
+2. [Pools and Positions](#pools-and-positions)
 3. [Fee Mechanism](#fee-mechanism)
 4. [NFT Mechanism for Representing Positions](#nft-mechanism-for-representing-positions)
-5. [References](#references)
+5. [Additional Notes](#additional-notes)
+6. [References](#references)
 
 ## Introduction
 - Brief overview of Uniswap V3, with a mention of v3-core and v3-periphery repositories.
@@ -36,10 +37,7 @@ In this document, we will primarily focus on the `v3-core` repository, as it for
 
 
 ## Pools and Positions
-- Explanation of how Uniswap V3 keeps track of positions.
-- Description of the Position struct and its fields.
-
-In Uniswap V3, every Pool is an instance of [`contract UniswapV3Pool`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L30). We will discuss some of its variables that are relevant to our report. Let's first start with the *immutables*:
+In Uniswap V3, every Pool is an instance of [`contract UniswapV3Pool`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L30). A pool contains many variables that define it or its state. Here, we will discuss some of those that are of relevance to this report. To begin with, let's look at some variables from the set of *immutables*:
 
 ```solidity
 /// @notice The first of the two tokens of the pool, sorted by address
@@ -51,7 +49,7 @@ uint24 public immutable override fee;
 ```
 [[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L44:)
 <br><br>
-In addition, each pool maintains (in storage) a mapping `mapping(bytes32 => Position.Info) public override positions` of the open positions of the participating LPs. Essentially, a position represents  the owner's liquidity between the lower and upper tick boundary. The mapping maps from the [`keccak(owner, lowerTick, upperTick)`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/libraries/Position.sol#L36) to the info of the `Position`. The latter looks like this:
+In addition, there is the set of variables that describes the current *state* of the Pool (those are desribed in [`IUniswapV3PoolState`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/interfaces/pool/IUniswapV3PoolState.sol#LL7C11-L7C31)). Here, we will only discuss some of those, which are relevant to the purpose of this document. Firstly, we have `uint128 public override liquidity` which captures the liquidity available to the Pool in the current range. Moreover, each pool maintains (in storage) a mapping `mapping(bytes32 => Position.Info) public override positions` of the open positions of the participating LPs. Essentially, a position represents  the owner's liquidity between the lower and upper tick boundary. The mapping maps from the [`keccak(owner, lowerTick, upperTick)`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/libraries/Position.sol#L36) to the `Position.Info` struct. The latter looks like this:
 ```solidity
 struct Info {
   // the amount of liquidity owned by this position
@@ -65,9 +63,8 @@ struct Info {
 }
 ```
 [[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/libraries/Position.sol#L13) Therefore, the position is defined by the owner and the lower and upper ticks, and it stores information on the amount of liquidity, the fee growth and the tokens owned (the latter parts to be discussed in the section). 
-<br><br><br>
 
-- write how liquidity is affected by mint() and burn()
+The amount of liquidity in position can be affected in two ways, by depositing more liquidity with [`mint()`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L457) or by withdrawing liquidity with [`burn()`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L517). Both of these methods will call [`_modifyPosition`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L306). The latter will first call `_updatePosition()`, which will update the liquidity of the position itself (more details on this in the next section where we talk about fees), and then also update `liquidity` [here](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#LL361C17-L361C27).
  
 
 ## Fee Mechanism
@@ -91,19 +88,35 @@ function swap(
 /// @notice The fee growth as a Q128.128 fees of token0 collected per unit of liquidity for the entire life of the pool
 uint256 public override feeGrowthGlobal0X128;
 ```
-[[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/interfaces/pool/IUniswapV3PoolState.sol#L36) This is represented as Q128.128 (fixed point number 128.128) and corresponds to fees of token0 per unit of liquidity.
+[[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/interfaces/pool/IUniswapV3PoolState.sol#L36) This is represented as Q128.128 (fixed point number 128.128) and corresponds to fees of token0 per unit of liquidity. For a swap, the global fee tracker is updated here:
+```solidity
+// update global fee tracker
+if (state.liquidity > 0)
+  state.feeGrowthGlobalX128 += FullMath.mulDiv(step.feeAmount, FixedPoint128.Q128, state.liquidity);
+```
+[[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L689) The `state` variable is a struct of type [`SwapState`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L561) which keeps information on the state of each swap. Note that a swap could also [affect](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L755) the `liquidity` variable (as it might move an amount of liquidity in/out of the current range). Finally, the relevant `feeGrowthGlobal` variable (and [protocol fees](#protocol-fees) - to be mentioned in the next section) is [re-assigned](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L759) from the info in the state variable. 
 
+Let's now discuss how the fee growth of a certain position is calculated based on the global fee growth. 
 
+## Additional Notes
+
+In this section, we will briefly mention some additional details that did not make it in the main body of the document.
+
+## Math Libraries
+
+Uniswap V3 has a few libraries used for calculations. Those can be found in [`contracts/libraries`](https://github.com/Uniswap/v3-core/tree/main/contracts/libraries) folder. For example, `LiquidityMath` is used to calculate changes in liquidity and `TickMath` is used to calculate the (sqrt) price from ticks and vice versa. Many other math libraries can be found in the linked folder. 
 
 ### Protocol Fees
 Not as important but write something about it? 
 
-## NFT Mechanism for Representing Positions
+### NFT Mechanism for Representing Positions
 - Explanation of how Uniswap V3 uses NFTs to represent liquidity positions.
 - Description of the minting process and the role of the NonfungiblePositionManager contract.
 - Link to the relevant code in the Uniswap V3 repository.
 
-## Notes
+
+### Uniswap V4 
+
 Uniswap V4 was announced while I was writing this document :smile_cat: <br>
 https://blog.uniswap.org/uniswap-v4
 
