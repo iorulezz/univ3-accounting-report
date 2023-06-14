@@ -137,13 +137,11 @@ This document specifically puts the emphasis on the code and particularly the pa
 ### Protocol Fees
 Uniswap V3 has a mechanism for protocol fees, i.e. fees that are accruing for the protocol itself and be collected by the Pool admin/owner. The protocol fee is [defined](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L69) as a percentage of the (swap) fees. The tokens owed as protocol fees are stored in the [`ProtocolFees`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L82) struct and are [recalculated](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L761) at every swap. Finally, these fees can be collected calling the [`collectProtocol()`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L848) method.
 
-### NFT Mechanism for Representing Positions
-- Explanation of how Uniswap V3 uses NFTs to represent liquidity positions.
-- Description of the minting process and the role of the NonfungiblePositionManager contract.
-- Link to the relevant code in the Uniswap V3 repository.
-
 ### Callbacks
 There are three callbacks that are used by the Pool and are all defined [here](https://github.com/Uniswap/v3-core/tree/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/interfaces/callback). Essentially, the callbacks are there to make sure that tokens owed from the user to the Pool are paid before the transaction is over. This is the case for all `mint()`, `swap()` and `flash()`. This implies that these methods can be called only by contracts that implement the methods defined in the interfaces linked above. For example, the callback for a swap takes place [here](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L776). The contracts in `v3-periphery` which call the contract in core have to define these methods. As an example, here is the definition of [`uniswapV3SwapCallback`](https://github.com/Uniswap/v3-periphery/blob/6cce88e63e176af1ddb6cc56e029110289622317/contracts/SwapRouter.sol#L57) in `SwapRouter` from `v3-periphery`.
+
+### NFTs for Representing Positions
+Another note of interest is that UniswapV3 (when used as an app or through the periphery contracts) is that it represents a Position with an NFT. This is done in the [`NonfungiblePositionManager`](https://github.com/Uniswap/v3-periphery/blob/6cce88e63e176af1ddb6cc56e029110289622317/contracts/NonfungiblePositionManager.sol#L23) contract, which also understands methods like `mint()`, `burn()`, etc. The `NonfungiblePositionManager` contract maintains its own record of positions using a `Position` struct. These positions are stored in a private mapping, `mapping(uint256 => Position) private _positions`, where the key is the unique token ID associated with each NFT. 
 
 ### Uniswap V4 
 Uniswap V4 was announced while I was writing this document :smile_cat: <br>
