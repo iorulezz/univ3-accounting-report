@@ -4,9 +4,8 @@
 1. [Introduction](#introduction)
 2. [Pools and Positions](#pools-and-positions)
 3. [Fee Mechanism](#fee-mechanism)
-4. [NFT Mechanism for Representing Positions](#nft-mechanism-for-representing-positions)
-5. [Additional Notes](#additional-notes)
-6. [References](#references)
+4. [Additional Notes](#additional-notes)
+5. [References](#references)
 
 ## Introduction
 - Brief overview of Uniswap V3, with a mention of v3-core and v3-periphery repositories.
@@ -96,7 +95,23 @@ if (state.liquidity > 0)
 ```
 [[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L689) The `state` variable is a struct of type [`SwapState`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L561) which keeps information on the state of each swap. Note that a swap could also [affect](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L755) the `liquidity` variable (as it might move an amount of liquidity in/out of the current range). Finally, the relevant `feeGrowthGlobal` variable (and [protocol fees](#protocol-fees) - to be mentioned in the next section) is [re-assigned](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L759) from the info in the state variable. 
 
-Let's now discuss how the fee growth of a certain position is calculated based on the global fee growth. 
+Let's now discuss how the fee growth of a certain position is calculated based on the global fee growth. The fees accrued by each Position are not calculated after every swap (as it would be very gas-intensive to do so for every Position). Instead, they are calculated every time an LP interacts with their position through `mint()`, `burn()`. As we discussed in the previous section, both of those methods call `_updatePosition()` down the stack:
+```solidity
+/// @dev Gets and updates a position with the given liquidity delta
+/// @param owner the owner of the position
+/// @param tickLower the lower tick of the position's tick range
+/// @param tickUpper the upper tick of the position's tick range
+/// @param tick the current tick, passed to avoid sloads
+function _updatePosition(
+  address owner,
+  int24 tickLower,
+  int24 tickUpper,
+  int128 liquidityDelta,
+  int24 tick
+) private returns (Position.Info storage position) {
+```
+[[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L379) This method will perform some tick operations to update ticks that have been crossed and eventually will calculate the fee growth *inside* the Position, with variables `feeGrowthInside0X128` and `feeGrowthInside1X128` by using the [`getFeeGrowthInside()`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/libraries/Tick.sol#L60) method from the Tick library. Finally, the `update()` method of the Position library will be called:
+
 
 ## Additional Notes
 
