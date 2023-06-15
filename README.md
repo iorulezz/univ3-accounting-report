@@ -8,33 +8,26 @@
 5. [References](#references)
 
 ## Introduction
-- Statement of the document's focus on v3-core.
+Uniswap V3 is a prominent decentralized exchange (DEX), known for its innovative features and mechanisms that set it apart from its predecessors. This document aims to delve into some of the intricacies of Uniswap V3. In particular, our focus is on how the protocol handles the accounting of positions and fees. Our goal is to provide relevant snippets and references from the code repos to where exactly this is done.
 
-Uniswap V3 is a prominent decentralized exchange (DEX), known for its innovative features and mechanisms that set it apart from its predecessors. This document aims to delve into some of the intricacies of Uniswap V3. In particular, our focus is on how the protocol handles the accounting of positions and fees. Our goal
+In this report, we largely ignore price mechanics and the details of the calculations. We do point, however, to the relevant bits of code. Furthermore, we provide links to the Uniswap V3 book and suggest this [introduction](https://uniswapv3book.com/docs/introduction/uniswap-v3/) a starter for the reader who wants to dive deeper in these topics. 
 
-The ho
-
-Write how we ignore price mechanics and link the book for details. 
-
-Th focus is blah blah. Liquidity Provider (LP), Pool, token0 and token1. 
+In the following sections, we will describe how the liquidity of the positions of the participating Liquidity Providers (LPs) is accounted for and, similarly, how the fees for each position are accrued. 
 
 ### V2 vs V3
-The key novelty of Uniswap V3 is the introduction of *concentrated liquidity* in V3. In Uniswap V2, liquidity is distributed across an infinite range of prices, which can lead to capital inefficiency (as some of the provided liquidity may never be used). Uniswap V3 addresses this issue by allowing liquidity providers to specify a price range for their liquidity, effectively concentrating their capital where it's most likely to be needed.
+The key novelty of Uniswap V3 is the introduction of *concentrated liquidity*. In Uniswap V2, liquidity is distributed across the infinite range of prices, which can lead to capital inefficiency (as some of the provided liquidity may never be used). Uniswap V3 addresses this issue by allowing liquidity providers to specify a price range for their liquidity, effectively concentrating their capital where it's most likely to be needed.
 
 This is achieved through a mechanism called *ticks*. The entire price range is divided into discrete 'ticks', and liquidity providers can choose the upper and lower ticks between which their liquidity will be active. This means that their liquidity is only used when the market price of the pair is within their chosen range, making their capital more efficient.
 
-Another significant difference is that Uniswap V3 uses a square root price function, which simplifies the calculation of prices and liquidity amounts and reduces the potential for rounding errors. This also allows for more precise and flexible liquidity provision.
+Another significant difference is that Uniswap V3 uses a square root price function, which simplifies the calculation of prices and liquidity amounts and reduces the potential for rounding errors. This also allows for more precise and flexible liquidity provision. For a more detailed explanation of these concepts, you can refer to [the Uniswap V3 Development Book](#references).
 
-These improvements in Uniswap V3 make it more capital efficient and flexible than V2, and they form the basis for the mechanisms of accounting, positions, and fees that we will discuss in this document. For a more detailed explanation of these concepts, you can refer to [the Uniswap V3 Development Book](#references).
-
-
-### Code repos
+### Base contracts vs periphery
 The Uniswap V3 protocol is primarily composed of two repositories: `v3-core` and `v3-periphery`. The `v3-core` repository contains the core contracts and logic for the protocol, including the contracts for pools, positions, and fees. On the other hand, the `v3-periphery` repository includes additional contracts that interact with the core contracts, providing extra functionality such as multicall, swapping, and liquidity management.
 
-In this document, we will primarily focus on the `v3-core` repository, as it forms the backbone of the Uniswap V3 protocol and is directly responsible for the mechanisms of accounting, positions, and fees. However, it's important to note that the `v3-periphery` repository also plays a significant role in the overall functionality of the protocol.
+In this document, we will primarily focus on the `v3-core` repository, as it forms the backbone of the Uniswap V3 protocol and is directly responsible for the mechanisms of accounting, positions, and fees. However, it's important to note that the `v3-periphery` repository also plays a significant role in the overall functionality of the protocol. Periphery contracts are designed to be more user-friendly and are typically the ones that end users interact with.
 
 ## Pools and Positions
-In Uniswap V3, every Pool is an instance of [`contract UniswapV3Pool`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L30). A pool contains many variables that define it or its state. Here, we will discuss some of those that are of relevance to this report. To begin with, let's look at some variables from the set of *immutables*:
+In Uniswap V3, every Pool is an instance of the [`contract UniswapV3Pool`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L30). A pool contains many variables that define it or its state. Here, we will discuss some of those that are of relevance to this report. To begin with, let's look at some of the *immutable* variables:
 
 ```solidity
 /// @notice The first of the two tokens of the pool, sorted by address
@@ -59,18 +52,17 @@ struct Info {
   uint128 tokensOwed1;
 }
 ```
-[[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/libraries/Position.sol#L13) Therefore, the position is defined by the owner and the lower and upper ticks, and it stores information on the amount of liquidity, the fee growth and the tokens owned (the latter parts to be discussed in the section). 
+[[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/libraries/Position.sol#L13) Therefore, the position is defined by the owner and the lower and upper ticks, and it stores information on the amount of liquidity, the fee growth and the tokens owned (the latter parts to be discussed in the next section). 
 
-The amount of liquidity in position can be affected in two ways, by depositing more liquidity with [`mint()`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L457) or by withdrawing liquidity with [`burn()`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L517). Both of these methods will call [`_modifyPosition`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L306). The latter will first call `_updatePosition()`, which will update the liquidity of the position itself (more details on this in the next section where we talk about fees), and then also update `liquidity` [here](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#LL361C17-L361C27).
+The amount of liquidity in position can be affected in two ways, by depositing more liquidity with [`mint()`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L457) or by withdrawing liquidity with [`burn()`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L517). Both of these methods will call [`_modifyPosition()`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L306). The latter will first call `_updatePosition()`, which will update the liquidity of the position itself (more details on this in the next section where we talk about fees), and then also update `liquidity` [here](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#LL361C17-L361C27).
  
-
 ## Fee Mechanism
 - Explanation of how fees are calculated and distributed in Uniswap V3.
 - Description of the fee growth mechanism.
 - Explanation of how fees are tracked and accumulated.
 - Link to the relevant code in the Uniswap V3 repository.
 
-The fees are collected from users of the protocol who perform swaps (the concept of a flash swap is also defined and generates fees but let's deem it out of scope for this document). The method for swapping tokens looks like:
+The fees are collected from users of the protocol who perform swaps (the concept of a flash swap is also defined and generates fees but for simplicity we will focus on only swaps for this document). Tokens are swapped with the following method:
 ```solidity
 /// @notice Swap token0 for token1, or token1 for token0
 function swap(
@@ -80,7 +72,7 @@ function swap(
   ...
 ) external returns (int256 amount0, int256 amount1);
 ```
-[[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L457) Note that we are ignoring price mechanics etc. Each swap charges the fee on the input token, i.e. the Pool keeps some of the input token as fee. This way the fees accumulate and will eventually be distributed to the LPs based on the amount of liquidity they are holding. The variables `feeGrowthGlobal0X128` and `feeGrowthGlobal1X128` keep account of the fee accumulation for this Pool. For example, `feeGrowthGlobal0X128` is defined as:
+[[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L457) Each swap charges the fee on the input token, i.e. the Pool keeps some of the input token as fee. This way the fees accumulate and will eventually be distributed to the LPs based on the amount of liquidity they are holding. The variables `feeGrowthGlobal0X128` and `feeGrowthGlobal1X128` keep account of the fee accumulation for this Pool. For example, `feeGrowthGlobal0X128` is defined as:
 ```solidity
 /// @notice The fee growth as a Q128.128 fees of token0 collected per unit of liquidity for the entire life of the pool
 uint256 public override feeGrowthGlobal0X128;
@@ -122,9 +114,9 @@ function update(
   uint256 feeGrowthInside1X128
 ) internal {
 ```
-[[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/libraries/Position.sol#L44) As we discussed in the previous section, this method will update the liquidity of the position (if needed) and will also update the variables `tokensOwed0` and `tokensOwed1` which represent how many of each token the position (owner) is owed from the Pool. Those variables correspond to the tokens owed from fees accrued plus the tokens owed due to liquidity burn. As mentioned above, the `tokensOwed` variables will be updated only when `burn()` or `mint()` are called. In particular the protocol is designed such that when a user calls `burn(amount=0)`, since the liquidity delta is 0, it will update the `tokensOwed` variables with the fees they have accrued since their last update.
+[[link to code]](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/libraries/Position.sol#L44) This method will update the liquidity of the position (if needed) and will also update the variables `tokensOwed0` and `tokensOwed1` which represent how many of each token the position (owner) is owed from the Pool. Those variables correspond to the tokens owed from fees accrued plus the tokens owed due to liquidity burn. As mentioned above, the `tokensOwed` variables will be updated only when `burn()` or `mint()` are called. In particular the protocol is designed such that when a user calls `burn(amount=0)`, since the liquidity delta is 0, it will update the `tokensOwed` variables with the fees they have accrued since their last update.
 
-Lastly, the tokens owed will not be sent to the caller by calling `mint()` or `burn()`. For this, a special [`collect()`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L490) method exists. The owner of the Position will have to call collect and only then the tokens owed will be sent to the specified recipient. 
+Lastly, the tokens owed will not be sent to the caller by calling `burn()`. For this, a special [`collect()`](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L490) method exists. The owner of the Position will have to call collect and only then the tokens owed will be sent to the specified recipient. Of course, the `tokensOwed` variables will be updated to reflect that a collection has occured. 
 
 ## Additional Notes
 
@@ -141,7 +133,7 @@ Uniswap V3 has a mechanism for protocol fees, i.e. fees that are accruing for th
 There are three callbacks that are used by the Pool and are all defined [here](https://github.com/Uniswap/v3-core/tree/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/interfaces/callback). Essentially, the callbacks are there to make sure that tokens owed from the user to the Pool are paid before the transaction is over. This is the case for all `mint()`, `swap()` and `flash()`. This implies that these methods can be called only by contracts that implement the methods defined in the interfaces linked above. For example, the callback for a swap takes place [here](https://github.com/Uniswap/v3-core/blob/d8b1c635c275d2a9450bd6a78f3fa2484fef73eb/contracts/UniswapV3Pool.sol#L776). The contracts in `v3-periphery` which call the contract in core have to define these methods. As an example, here is the definition of [`uniswapV3SwapCallback`](https://github.com/Uniswap/v3-periphery/blob/6cce88e63e176af1ddb6cc56e029110289622317/contracts/SwapRouter.sol#L57) in `SwapRouter` from `v3-periphery`.
 
 ### NFTs for Representing Positions
-Another note of interest is that UniswapV3 (when used as an app or through the periphery contracts) is that it represents a Position with an NFT. This is done in the [`NonfungiblePositionManager`](https://github.com/Uniswap/v3-periphery/blob/6cce88e63e176af1ddb6cc56e029110289622317/contracts/NonfungiblePositionManager.sol#L23) contract, which also understands methods like `mint()`, `burn()`, etc. The `NonfungiblePositionManager` contract maintains its own record of positions using a `Position` struct. These positions are stored in a private mapping, `mapping(uint256 => Position) private _positions`, where the key is the unique token ID associated with each NFT. 
+Another note of interest is that UniswapV3 (when used as an app or through the periphery contracts) is that it represents a Position with an NFT. This is done in the [`NonfungiblePositionManager`](https://github.com/Uniswap/v3-periphery/blob/6cce88e63e176af1ddb6cc56e029110289622317/contracts/NonfungiblePositionManager.sol#L23) contract, which also understands methods like `mint()`, `burn()`, etc. The `NonfungiblePositionManager` contract maintains its own record of positions using a `Position` struct. These positions are stored in a private mapping, `mapping(uint256 => Position) private _positions`, where the key is the unique token ID associated with each NFT. Note than when positions are minted from the periphery contract, their owner in the the `Position` struct in the core contract is set to be the address of the `NonfungiblePositionManager` contract. For the periphery contract itself the owner is whoever holds the NFT (which implies the latter can be exchanged between users of the protocol).
 
 ### Uniswap V4 
 Uniswap V4 was announced while I was writing this document :smile_cat: <br>
